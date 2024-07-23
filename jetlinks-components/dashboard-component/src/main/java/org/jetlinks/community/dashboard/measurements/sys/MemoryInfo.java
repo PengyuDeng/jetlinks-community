@@ -48,6 +48,11 @@ public class MemoryInfo implements MonitorInfo<MemoryInfo> {
     }
 
     @Override
+    public String getId() {
+        return "memory";
+    }
+
+    @Override
     public MemoryInfo add(MemoryInfo info) {
         return new MemoryInfo(
             info.jvmHeapTotal + this.jvmHeapTotal,

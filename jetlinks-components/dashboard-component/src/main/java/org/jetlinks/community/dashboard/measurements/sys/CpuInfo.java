@@ -18,6 +18,11 @@ public class CpuInfo implements MonitorInfo<CpuInfo> {
     private float systemUsage;
 
     @Override
+    public String getId() {
+        return "cpu";
+    }
+
+    @Override
     public CpuInfo add(CpuInfo info) {
         return new CpuInfo(
             MonitorUtils.round(info.jvmUsage + this.jvmUsage),

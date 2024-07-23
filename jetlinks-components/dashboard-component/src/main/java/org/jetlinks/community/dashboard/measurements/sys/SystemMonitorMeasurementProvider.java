@@ -1,8 +1,6 @@
 package org.jetlinks.community.dashboard.measurements.sys;
 
 import com.google.common.collect.Maps;
-
-
 import org.hswebframework.web.api.crud.entity.QueryParamEntity;
 import org.hswebframework.web.bean.FastBeanCopier;
 import org.jetlinks.community.dashboard.*;
@@ -189,6 +187,7 @@ public class SystemMonitorMeasurementProvider extends StaticMeasurementProvider 
         putTo("cpu", info.getCpu(), map);
         putTo("disk", info.getDisk(), map);
         putTo("memory", info.getMemory(), map);
+        putTo("network",info.getNetworkInfo(),map);
         return TimeSeriesData.of(System.currentTimeMillis(), map);
     }
 

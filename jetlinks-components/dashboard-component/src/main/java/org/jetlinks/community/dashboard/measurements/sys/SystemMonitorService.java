@@ -11,4 +11,6 @@ public interface SystemMonitorService {
     Mono<CpuInfo> cpu();
 
     Mono<DiskInfo> disk();
+
+    Mono<NetworkInfo> network();
 }

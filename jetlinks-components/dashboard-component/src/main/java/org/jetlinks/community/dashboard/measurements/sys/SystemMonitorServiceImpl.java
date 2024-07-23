@@ -1,12 +1,20 @@
 package org.jetlinks.community.dashboard.measurements.sys;
 
 import org.jetlinks.community.dashboard.measurements.SystemMonitor;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.File;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.HashSet;
 
 public class SystemMonitorServiceImpl implements SystemMonitorService {
 
@@ -20,9 +28,10 @@ public class SystemMonitorServiceImpl implements SystemMonitorService {
             .zip(
                 cpu(),
                 memory(),
-                disk()
+                disk(),
+                network()
             )
-            .map(tp3 -> SystemInfo.of(tp3.getT1(), tp3.getT2(), tp3.getT3()));
+            .map(tp3 -> SystemInfo.of(tp3.getT1(), tp3.getT2(), tp3.getT3(), tp3.getT4()));
     }
 
     @Override
@@ -36,6 +45,26 @@ public class SystemMonitorServiceImpl implements SystemMonitorService {
         diskInfo.setTotal(total / MB);
         diskInfo.setFree(usable / MB);
         return Mono.just(diskInfo);
+    }
+
+    @Override
+    public Mono<NetworkInfo> network() {
+        return Mono
+            .fromCallable(() -> {
+                Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
+
+                HashSet<NetworkInfo.Network> set = new HashSet<>();
+                while (networkInterfaces.hasMoreElements()) {
+                    NetworkInterface networkInterface = networkInterfaces.nextElement();
+                    set.add(new NetworkInfo.Network(networkInterface.getName(),
+                                                    networkInterface.getDisplayName(),
+                                                    Arrays.toString(networkInterface.getHardwareAddress()),
+                                                    networkInterface.isVirtual(),
+                                                    networkInterface.isUp()));
+                }
+                return NetworkInfo.of(set);
+            })
+            .subscribeOn(Schedulers.boundedElastic());
     }
 
     public Mono<MemoryInfo> memory() {

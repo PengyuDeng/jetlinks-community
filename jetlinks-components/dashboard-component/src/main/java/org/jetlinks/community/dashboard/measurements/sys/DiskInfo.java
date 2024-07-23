@@ -24,6 +24,11 @@ public class DiskInfo implements MonitorInfo<DiskInfo> {
     }
 
     @Override
+    public String getId() {
+        return "disk";
+    }
+
+    @Override
     public DiskInfo add(DiskInfo info) {
         return new DiskInfo(
             info.total + this.total,
