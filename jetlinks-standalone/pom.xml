@@ -131,31 +131,7 @@
 
         <dependency>
             <groupId>${project.groupId}</groupId>
-            <artifactId>network-manager</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>device-manager</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>notify-manager</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>${project.groupId}</groupId>
             <artifactId>logging-manager</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>rule-engine-manager</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -270,9 +246,22 @@
 
         <dependency>
             <groupId>org.jetlinks.community</groupId>
-            <artifactId>tdengine-component</artifactId>
+            <artifactId>dashboard-component</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.jetlinks.community</groupId>
+            <artifactId>io-component</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.jetlinks.community</groupId>
+            <artifactId>gateway-component</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
     </dependencies>
 
 

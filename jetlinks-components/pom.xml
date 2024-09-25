@@ -12,22 +12,15 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>network-component</module>
         <module>gateway-component</module>
         <module>io-component</module>
         <module>elasticsearch-component</module>
         <module>timeseries-component</module>
         <module>dashboard-component</module>
         <module>common-component</module>
-        <module>notify-component</module>
         <module>logging-component</module>
-        <module>rule-engine-component</module>
         <module>configure-component</module>
-        <module>things-component</module>
-        <module>script-component</module>
-        <module>protocol-component</module>
         <module>relation-component</module>
-        <module>tdengine-component</module>
     </modules>
 
     <artifactId>jetlinks-components</artifactId>
