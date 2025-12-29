@@ -133,6 +133,7 @@ public class MqttServerDebugSubscriptionProvider implements SubscriptionProvider
             data.put("address", connection.getClientAddress().toString());
             data.put("topics", subscription
                 .getMessage()
+                .payload()
                 .topicSubscriptions()
                 .stream()
                 .map(subs -> "QoS:" + subs.qualityOfService().value() + " Topic:" + subs.topicName())
@@ -146,6 +147,7 @@ public class MqttServerDebugSubscriptionProvider implements SubscriptionProvider
             data.put("address", connection.getClientAddress().toString());
             data.put("topics", subscription
                 .getMessage()
+                .payload()
                 .topics()
             );
             return MqttClientMessage.of("unsubscription", "取消订阅", data);

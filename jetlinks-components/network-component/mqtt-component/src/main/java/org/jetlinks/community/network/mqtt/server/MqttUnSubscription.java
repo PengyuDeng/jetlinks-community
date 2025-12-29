@@ -15,7 +15,7 @@
  */
 package org.jetlinks.community.network.mqtt.server;
 
-import io.vertx.mqtt.messages.MqttUnsubscribeMessage;
+import io.netty.handler.codec.mqtt.MqttUnsubscribeMessage;
 
 public interface MqttUnSubscription {
 

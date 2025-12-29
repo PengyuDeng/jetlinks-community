@@ -13,39 +13,43 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetlinks.community.network.mqtt.server.vertx;
+package org.jetlinks.community.network.mqtt.server.netty;
 
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.EventLoopGroup;
 import io.netty.handler.codec.mqtt.MqttConnectReturnCode;
+import io.netty.handler.ssl.SslContext;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.jctools.maps.NonBlockingHashMap;
+import org.jetlinks.community.network.DefaultNetworkType;
+import org.jetlinks.community.network.NetworkType;
 import org.jetlinks.community.network.mqtt.server.MqttConnection;
 import org.jetlinks.community.network.mqtt.server.MqttServer;
 import org.jetlinks.core.utils.Reactors;
-import org.jetlinks.community.network.DefaultNetworkType;
-import org.jetlinks.community.network.NetworkType;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.util.concurrent.Queues;
 
 import java.net.InetSocketAddress;
-import java.util.Collection;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
-public class VertxMqttServer implements MqttServer {
+public class NettyMqttServer implements MqttServer {
 
     private final Sinks.Many<MqttConnection> sink = Reactors.createMany(5 * 1024, false);
 
-    private final Map<String, List<Sinks.Many<MqttConnection>>> sinks =
-        new NonBlockingHashMap<>();
+    private final Map<String, List<Sinks.Many<MqttConnection>>> sinks = new NonBlockingHashMap<>();
 
-    private Collection<io.vertx.mqtt.MqttServer> mqttServer;
+    private volatile MqttServerBuilder.DisposableMqttServer server;
 
     private final String id;
 
@@ -56,27 +60,82 @@ public class VertxMqttServer implements MqttServer {
     @Setter(AccessLevel.PACKAGE)
     private InetSocketAddress bind;
 
-    public VertxMqttServer(String id) {
+    public NettyMqttServer(String id) {
         this.id = id;
     }
 
-    public void setMqttServer(Collection<io.vertx.mqtt.MqttServer> mqttServer) {
-        if (this.mqttServer != null && !this.mqttServer.isEmpty()) {
-            shutdown();
-        }
-        this.mqttServer = mqttServer;
-        for (io.vertx.mqtt.MqttServer server : this.mqttServer) {
-            server
-                .exceptionHandler(error -> {
-                    log.error(error.getMessage(), error);
+    /**
+     * 使用流式 API 启动服务器
+     */
+    public Mono<NettyMqttServer> start(NettyMqttServerProperties properties,
+                                        EventLoopGroup bossGroup,
+                                        EventLoopGroup workerGroup,
+                                        SslContext sslContext) {
+        return Mono.fromCallable(() -> {
+            if (this.server != null && !this.server.isDisposed()) {
+                shutdown();
+            }
+
+            this.bind = new InetSocketAddress(properties.getHost(), properties.getPort());
+
+            MqttServerBuilder.DisposableMqttServer disposableServer = MqttServerBuilder
+                .create()
+                .host(properties.getHost())
+                .port(properties.getPort())
+                .maxMessageSize(properties.getMaxMessageSize())
+                .eventLoopGroups(bossGroup, workerGroup)
+                .ssl(sslContext)
+                .handle(connection -> {
+                    // 分发连接到订阅者
+                    handleConnection(connection);
+                    // 返回空 Mono，连接处理由订阅者完成
+                    return Mono.empty();
                 })
-                .endpointHandler(endpoint -> {
-                    handleConnection(new VertxMqttConnection(endpoint));
-                });
-        }
+                .bindNow();
+
+            this.server = disposableServer;
+            log.debug("startup mqtt server [{}] on port :{}", id, properties.getPort());
+
+            return this;
+        }).onErrorResume(e -> {
+            this.lastError = e.getMessage();
+            log.warn("startup mqtt server [{}] error", id, e);
+            return Mono.error(e);
+        });
     }
 
-    private boolean emitNext(Sinks.Many<MqttConnection> sink, VertxMqttConnection connection){
+    /**
+     * 使用旧的 Channel 方式设置服务器（向后兼容）
+     */
+    public void setServerChannel(Channel serverChannel) {
+        if (this.server != null && !this.server.isDisposed()) {
+            shutdown();
+        }
+        // 包装为 DisposableMqttServer
+        this.server = new MqttServerBuilder.DisposableMqttServer() {
+            @Override
+            public InetSocketAddress address() {
+                return bind;
+            }
+
+            @Override
+            public void dispose() {
+                serverChannel.close();
+            }
+
+            @Override
+            public boolean isDisposed() {
+                return !serverChannel.isActive();
+            }
+
+            @Override
+            public Channel channel() {
+                return serverChannel;
+            }
+        };
+    }
+
+    private boolean emitNext(Sinks.Many<MqttConnection> sink, NettyMqttConnection connection) {
         if (sink.currentSubscriberCount() <= 0) {
             return false;
         }
@@ -87,7 +146,7 @@ public class VertxMqttServer implements MqttServer {
         return false;
     }
 
-    private void handleConnection(VertxMqttConnection connection) {
+    public void handleConnection(NettyMqttConnection connection) {
         boolean anyHandled = emitNext(sink, connection);
 
         for (List<Sinks.Many<MqttConnection>> value : sinks.values()) {
@@ -130,7 +189,7 @@ public class VertxMqttServer implements MqttServer {
 
     @Override
     public boolean isAlive() {
-        return mqttServer != null && !mqttServer.isEmpty();
+        return server != null && !server.isDisposed();
     }
 
     @Override
@@ -150,19 +209,15 @@ public class VertxMqttServer implements MqttServer {
 
     @Override
     public void shutdown() {
-        if (mqttServer != null) {
-            for (io.vertx.mqtt.MqttServer server : mqttServer) {
-                server.close(res -> {
-                    if (res.failed()) {
-                        log.error(res.cause().getMessage(), res.cause());
-                    } else {
-                        log.debug("mqtt server [{}] closed", server.actualPort());
-                    }
-                });
+        if (server != null) {
+            try {
+                server.dispose();
+                log.debug("mqtt server [{}] closed", id);
+            } catch (Throwable e) {
+                log.error("shutdown mqtt server [{}] error", id, e);
             }
-            mqttServer.clear();
+            server = null;
         }
-
     }
 
     @Override

@@ -15,7 +15,7 @@
  */
 package org.jetlinks.community.network.mqtt.server;
 
-import io.vertx.mqtt.messages.MqttSubscribeMessage;
+import io.netty.handler.codec.mqtt.MqttSubscribeMessage;
 
 public interface MqttSubscription {
 

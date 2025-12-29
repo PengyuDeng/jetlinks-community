@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jetlinks.community.network.mqtt.server.vertx;
+package org.jetlinks.community.network.mqtt.server.netty;
 
 import lombok.*;
 import org.jetlinks.community.network.AbstractServerNetworkConfig;
@@ -24,7 +24,7 @@ import org.jetlinks.community.network.resource.NetworkTransport;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class VertxMqttServerProperties extends AbstractServerNetworkConfig {
+public class NettyMqttServerProperties extends AbstractServerNetworkConfig {
 
     //服务实例数量(线程数)
     private int instance = Runtime.getRuntime().availableProcessors();

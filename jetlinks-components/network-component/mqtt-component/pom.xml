@@ -20,6 +20,18 @@
             <version>${jetlinks.version}</version>
         </dependency>
 
+        <!-- Netty dependencies (for MQTT Server) -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-mqtt</artifactId>
+        </dependency>
+
+        <!-- Vert.x dependencies (for MQTT Client) -->
         <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-core</artifactId>
