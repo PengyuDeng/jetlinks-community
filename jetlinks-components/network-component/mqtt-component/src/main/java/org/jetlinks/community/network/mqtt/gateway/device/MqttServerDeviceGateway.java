@@ -16,6 +16,7 @@
 package org.jetlinks.community.network.mqtt.gateway.device;
 
 import io.netty.handler.codec.mqtt.MqttConnectReturnCode;
+import io.netty.util.ReferenceCountUtil;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.StatusCode;
 import lombok.Getter;
@@ -266,9 +267,10 @@ class MqttServerDeviceGateway extends AbstractDeviceGateway {
             .as(flux -> {
                 MqttMessage will = connection.getWillMessage().orElse(null);
                 if (will != null) {
-                    //合并遗言消息
+                    //合并遗言消息，处理完成后释放 ByteBuf
                     return flux.mergeWith(
                         this.decodeAndHandleMessage(operator, session, will, connection)
+                            .doFinally(signal -> ReferenceCountUtil.safeRelease(will.getPayload()))
                     );
                 }
                 return flux;

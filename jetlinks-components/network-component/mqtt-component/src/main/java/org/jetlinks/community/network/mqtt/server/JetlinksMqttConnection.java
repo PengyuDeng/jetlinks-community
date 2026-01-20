@@ -151,10 +151,15 @@ public class JetlinksMqttConnection implements MqttConnection {
         if (will == null || !will.hasWill()) {
             return Optional.empty();
         }
+        // retain payload，调用者需要在处理完成后释放
+        ByteBuf payload = will.payload();
+        if (payload != null) {
+            payload.retain();
+        }
         return Optional.of(SimpleMqttMessage
                                .builder()
                                .will(true)
-                               .payload(will.payload() != null ? will.payload() : Unpooled.EMPTY_BUFFER)
+                               .payload(payload != null ? payload : Unpooled.EMPTY_BUFFER)
                                .topic(will.topic())
                                .qosLevel(will.qos().value())
                                .retain(will.retain())
