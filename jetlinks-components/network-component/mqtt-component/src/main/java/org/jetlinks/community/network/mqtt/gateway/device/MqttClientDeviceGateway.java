@@ -31,7 +31,7 @@ import org.jetlinks.core.route.MqttRoute;
 import org.jetlinks.core.utils.TopicUtils;
 import org.jetlinks.community.gateway.AbstractDeviceGateway;
 import org.jetlinks.community.gateway.GatewayState;
-import org.jetlinks.community.network.mqtt.client.MqttClient;
+import org.jetlinks.community.network.mqtt.client.JetlinksMqttClient;
 import org.jetlinks.community.network.mqtt.gateway.device.session.UnknownDeviceMqttClientSession;
 import org.jetlinks.community.gateway.DeviceGatewayHelper;
 import org.jetlinks.supports.server.DecodedClientMessageHandler;
@@ -47,13 +47,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * MQTT Client 设备网关，使用网络组件中的MQTT Client来处理设备数据
  *
- * @author zhouhao
- * @since 1.0
+ * @author PengyuDeng
+ * @since 2.11
  */
 @Slf4j
 public class MqttClientDeviceGateway extends AbstractDeviceGateway {
 
-    final MqttClient mqttClient;
+    final JetlinksMqttClient mqttClient;
 
     private final DeviceRegistry registry;
 
@@ -66,7 +66,7 @@ public class MqttClientDeviceGateway extends AbstractDeviceGateway {
     private final Map<RouteKey, Tuple2<Integer, Disposable>> routes = new ConcurrentHashMap<>();
 
     public MqttClientDeviceGateway(String id,
-                                   MqttClient mqttClient,
+                                   JetlinksMqttClient mqttClient,
                                    DeviceRegistry registry,
                                    Mono<ProtocolSupport> protocol,
                                    DeviceSessionManager sessionManager,
@@ -188,7 +188,7 @@ public class MqttClientDeviceGateway extends AbstractDeviceGateway {
         private int qos;
     }
 
-    private MqttClientSession createDeviceSession(DeviceOperator device, MqttClient client) {
+    private MqttClientSession createDeviceSession(DeviceOperator device, JetlinksMqttClient client) {
         MqttClientSession session = new MqttClientSession(device.getDeviceId(), device, client, monitor);
         session.setGatewayId(getId());
         return session;

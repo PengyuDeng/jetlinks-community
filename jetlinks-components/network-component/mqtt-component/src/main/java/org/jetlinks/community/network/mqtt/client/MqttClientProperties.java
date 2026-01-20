@@ -19,14 +19,12 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetlinks.community.network.AbstractClientNetworkConfig;
 import org.jetlinks.community.network.resource.NetworkTransport;
-import org.jetlinks.community.network.AbstractClientNetworkConfig;
-import org.jetlinks.community.network.resource.NetworkTransport;
 
 /**
  * MQTT Client 配置信息
  *
- * @author zhouhao
- * @since 1.0
+ * @author PengyuDeng
+ * @since 2.11
  */
 @Getter
 @Setter

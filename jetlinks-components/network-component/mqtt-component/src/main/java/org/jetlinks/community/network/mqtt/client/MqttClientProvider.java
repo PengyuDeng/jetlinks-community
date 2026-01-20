@@ -15,63 +15,54 @@
  */
 package org.jetlinks.community.network.mqtt.client;
 
-import io.vertx.core.Vertx;
-import io.vertx.mqtt.MqttClient;
-import io.vertx.mqtt.MqttClientOptions;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.hswebframework.web.bean.FastBeanCopier;
 import org.hswebframework.web.i18n.LocaleUtils;
 import org.jetlinks.community.network.*;
+import org.jetlinks.community.network.security.Certificate;
+import org.jetlinks.community.network.security.CertificateManager;
 import org.jetlinks.core.metadata.ConfigMetadata;
 import org.jetlinks.core.metadata.DefaultConfigMetadata;
 import org.jetlinks.core.metadata.types.BooleanType;
 import org.jetlinks.core.metadata.types.IntType;
 import org.jetlinks.core.metadata.types.StringType;
-import org.jetlinks.community.network.security.CertificateManager;
-import org.jetlinks.community.network.security.VertxKeyCertTrustOptions;
+import org.jetlinks.reactor.mqtt.client.MqttClient;
+import org.jetlinks.reactor.mqtt.client.ReconnectStrategy;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.time.Duration;
 
 /**
  * MQTT Client 网络组件提供商
  *
- * @author zhouhao
- * @since 1.0
+ * @author PengyuDeng
+ * @since 2.11
  */
 @Component
 @Slf4j
 @ConfigurationProperties(prefix = "jetlinks.network.mqtt-client")
 public class MqttClientProvider implements NetworkProvider<MqttClientProperties> {
 
-    private final Vertx vertx;
-
     private final CertificateManager certificateManager;
-
-    private final Environment environment;
 
     @Getter
     @Setter
-    private MqttClientOptions template = new MqttClientOptions();
+    private int keepAliveInterval = 180;
 
+    @Getter
+    @Setter
+    private int maxInflightQueue = 65535;
 
-    public MqttClientProvider(CertificateManager certificateManager,
-                              Vertx vertx,
-                              Environment environment) {
-        this.vertx = vertx;
+    public MqttClientProvider(CertificateManager certificateManager) {
         this.certificateManager = certificateManager;
-        this.environment = environment;
-        template.setTcpKeepAlive(true);
-//        options.setReconnectAttempts(10);
-        template.setAutoKeepAlive(true);
-        template.setKeepAliveInterval(180);
-        template.setMaxInflightQueue(65535);
     }
 
     @Nonnull
@@ -83,40 +74,84 @@ public class MqttClientProvider implements NetworkProvider<MqttClientProperties>
     @Nonnull
     @Override
     public Mono<Network> createNetwork(@Nonnull MqttClientProperties properties) {
-        VertxMqttClient mqttClient = new VertxMqttClient(properties.getId());
+        DefaultJetlinksMqttClient mqttClient = new DefaultJetlinksMqttClient(properties.getId());
         return initMqttClient(mqttClient, properties);
     }
 
     @Override
     public Mono<Network> reload(@Nonnull Network network, @Nonnull MqttClientProperties properties) {
-        VertxMqttClient mqttClient = ((VertxMqttClient) network);
+        DefaultJetlinksMqttClient mqttClient = ((DefaultJetlinksMqttClient) network);
         if (mqttClient.isLoading()) {
             return Mono.just(mqttClient);
         }
         return initMqttClient(mqttClient, properties);
     }
 
-    public Mono<Network> initMqttClient(VertxMqttClient mqttClient, MqttClientProperties properties) {
-        return convert(properties)
-            .map(options -> {
+    public Mono<Network> initMqttClient(DefaultJetlinksMqttClient mqttClient, MqttClientProperties properties) {
+        return createReactorMqttClient(properties)
+            .flatMap(client -> {
                 mqttClient.setTopicPrefix(properties.getTopicPrefix());
                 mqttClient.setLoading(true);
-                MqttClient client = MqttClient.create(vertx, options);
-                mqttClient.setClient(client);
-                client.connect(properties.getRemotePort(), properties.getRemoteHost(), result -> {
-                    mqttClient.setLoading(false);
-                    if (!result.succeeded()) {
-                        log.warn("connect mqtt [{}@{}:{}] error",
-                                 properties.getClientId(),
-                                 properties.getRemoteHost(),
-                                 properties.getRemotePort(),
-                                 result.cause());
-                    } else {
-                        log.debug("connect mqtt [{}] success", properties.getId());
-                    }
-                });
-                return mqttClient;
+
+                return client.connect()
+                             .doOnSuccess(connection -> {
+                                 mqttClient.setConnection(connection);
+                                 mqttClient.setLoading(false);
+                                 log.debug("connect mqtt [{}] success", properties.getId());
+                             })
+                             .doOnError(err -> {
+                                 mqttClient.setLoading(false);
+                                 log.warn("connect mqtt [{}@{}:{}] error",
+                                          properties.getClientId(),
+                                          properties.getRemoteHost(),
+                                          properties.getRemotePort(),
+                                          err);
+                             })
+                             .thenReturn(mqttClient);
             });
+    }
+
+    private Mono<MqttClient> createReactorMqttClient(MqttClientProperties config) {
+        MqttClient client = MqttClient.create()
+                                      .host(config.getRemoteHost())
+                                      .port(config.getRemotePort())
+                                      .clientId(config.getClientId())
+                                      .keepAlive(keepAliveInterval)
+                                      .maxMessageSize(config.getMaxMessageSize())
+                                      .reconnectStrategy(ReconnectStrategy.exponentialBackoff(
+                                          Duration.ofSeconds(1),
+                                          Duration.ofMinutes(5)
+                                      ))
+                                      .autoResubscribe(true);
+
+        if (config.getUsername() != null) {
+            client.auth(config.getUsername(), config.getPassword());
+        }
+
+        if (config.isSecure()) {
+            return certificateManager
+                .getCertificate(config.getCertId())
+                .flatMap(this::createSslContext)
+                .map(sslContext -> {
+                    client.ssl(sslContext);
+                    return client;
+                });
+        }
+
+        return Mono.just(client);
+    }
+
+    private Mono<SslContext> createSslContext(Certificate certificate) {
+        return Mono.fromCallable(() -> {
+            SslContextBuilder builder = SslContextBuilder.forClient();
+            if (certificate.getKeyManagerFactory() != null) {
+                builder.keyManager(certificate.getKeyManagerFactory());
+            }
+            if (certificate.getTrustManagerFactory() != null) {
+                builder.trustManager(certificate.getTrustManagerFactory());
+            }
+            return builder.build();
+        });
     }
 
     @Nullable
@@ -144,33 +179,6 @@ public class MqttClientProvider implements NetworkProvider<MqttClientProperties>
                 return Mono.just(config);
             })
             .as(LocaleUtils::transform);
-    }
-
-
-    private Mono<MqttClientOptions> convert(MqttClientProperties config) {
-        MqttClientOptions options = new MqttClientOptions(template);
-
-        String clientId = String.valueOf(config.getClientId());
-
-        String username = config.getUsername();
-
-        String password = config.getPassword();
-
-        options.setClientId(clientId);
-        options.setPassword(password);
-        options.setUsername(username);
-        options.setMaxMessageSize(config.getMaxMessageSize());
-
-        if (config.isSecure()) {
-            options.setSsl(true);
-            return certificateManager
-                .getCertificate(config.getCertId())
-                .map(VertxKeyCertTrustOptions::new)
-                .doOnNext(options::setKeyCertOptions)
-                .doOnNext(options::setTrustOptions)
-                .thenReturn(options);
-        }
-        return Mono.just(options);
     }
 
     @Override
