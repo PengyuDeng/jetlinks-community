@@ -15,6 +15,7 @@
  */
 package org.jetlinks.community.network.mqtt.gateway.device;
 
+import io.netty.util.ReferenceCountUtil;
 import lombok.AllArgsConstructor;
 import lombok.EqualsAndHashCode;
 import lombok.extern.slf4j.Slf4j;
@@ -161,6 +162,10 @@ public class MqttClientDeviceGateway extends AbstractDeviceGateway {
                 .cast(DeviceMessage.class)
                 .concatMap(message -> handleMessage(mqttMessage, message))
                 .subscribeOn(Schedulers.parallel())
+                .doFinally(signal -> {
+                    // 释放 MqttMessage 中的 ByteBuf payload
+                    ReferenceCountUtil.safeRelease(mqttMessage.getPayload());
+                })
                 .onErrorResume((err) -> {
                     log.error("handle mqtt client message error:{}", mqttMessage, err);
                     return Mono.empty();

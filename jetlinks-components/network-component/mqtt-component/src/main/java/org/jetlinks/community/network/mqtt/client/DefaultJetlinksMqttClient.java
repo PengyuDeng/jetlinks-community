@@ -15,6 +15,7 @@
  */
 package org.jetlinks.community.network.mqtt.client;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.mqtt.MqttQoS;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -148,14 +149,20 @@ public class DefaultJetlinksMqttClient implements JetlinksMqttClient {
     }
 
     private MqttMessage convertToMqttMessage(ClientReceivedPublish receivedPublish) {
+        // retain payload，因为 reactor-mqtt 可能会在回调返回后释放原始 ByteBuf
+        // 消费者处理完消息后需要调用 ReferenceCountUtil.release(payload) 释放
+        ByteBuf payload = receivedPublish.getPayload();
+        if (payload != null) {
+            payload.retain();
+        }
         return SimpleMqttMessage
             .builder()
             .messageId(receivedPublish.getMessageId())
             .topic(receivedPublish.getTopic())
-            .payload(receivedPublish.getPayload())
+            .payload(payload)
             .dup(receivedPublish.isDup())
             .retain(receivedPublish.isRetain())
-            .qosLevel(receivedPublish.getQosLevel())
+            .qosLevel(receivedPublish.getQos().value())
             .properties(receivedPublish.getProperties())
             .build();
     }
