@@ -347,7 +347,7 @@ public class JetlinksMqttConnection implements MqttConnection {
 
         @Override
         public int getQosLevel() {
-            return publish.getQosLevel();
+            return publish.getQos().value();
         }
 
         @Override
