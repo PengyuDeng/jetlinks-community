@@ -29,11 +29,12 @@ import org.jetlinks.reactor.mqtt.client.ClientReceivedPublish;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 /**
@@ -46,67 +47,52 @@ import java.util.stream.Collectors;
 public class DefaultJetlinksMqttClient implements JetlinksMqttClient {
 
     private static final VarHandle CONNECTION;
-    private static final VarHandle LOADING;
+    private static final VarHandle CONFIG;
 
     static {
         try {
             MethodHandles.Lookup lookup = MethodHandles.lookup();
             CONNECTION = lookup.findVarHandle(DefaultJetlinksMqttClient.class, "connection", ClientConnection.class);
-            LOADING = lookup.findVarHandle(DefaultJetlinksMqttClient.class, "loading", boolean.class);
+            CONFIG = lookup.findVarHandle(DefaultJetlinksMqttClient.class, "mqttClientProperties", MqttClientProperties.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
     }
 
+    @SuppressWarnings("unused")
     private ClientConnection connection;
 
     private final String id;
 
-    private boolean loading;
-
-    private final List<Runnable> loadSuccessListener = new CopyOnWriteArrayList<>();
-
     @Setter
     private String topicPrefix;
+
+    @SuppressWarnings("unused")
+    private MqttClientProperties mqttClientProperties;
 
     public DefaultJetlinksMqttClient(String id) {
         this.id = id;
     }
 
     public ClientConnection getConnection() {
-        return (ClientConnection) CONNECTION.getVolatile(this);
+        return (ClientConnection) CONNECTION.get(this);
     }
 
     public void setConnection(ClientConnection connection) {
-        ClientConnection oldConnection = (ClientConnection) CONNECTION.getAndSet(this, connection);
-        if (oldConnection != null && oldConnection != connection) {
-            try {
-                oldConnection.disconnect().subscribe();
-            } catch (Exception ignore) {
-            }
-        }
-
-        if (isLoading()) {
-            loadSuccessListener.add(this::onConnected);
-        } else if (isAlive()) {
-            onConnected();
-        }
+        CONNECTION.set(this, connection);
     }
 
-    private void onConnected() {
-        log.debug("mqtt client [{}] connected", id);
+    public MqttClientProperties getMqttClientProperties() {
+        return (MqttClientProperties) CONFIG.get(this);
     }
 
-    public boolean isLoading() {
-        return (boolean) LOADING.getVolatile(this);
+    public void setMqttClientProperties(MqttClientProperties properties) {
+        CONFIG.set(this, properties);
     }
 
-    public void setLoading(boolean loading) {
-        LOADING.setVolatile(this, loading);
-        if (!loading) {
-            loadSuccessListener.forEach(Runnable::run);
-            loadSuccessListener.clear();
-        }
+    public boolean isSameConfig(MqttClientProperties properties) {
+        MqttClientProperties current = getMqttClientProperties();
+        return current != null && current.isSameConfig(properties);
     }
 
     protected String getCompleteTopic(String topic) {
@@ -118,39 +104,52 @@ public class DefaultJetlinksMqttClient implements JetlinksMqttClient {
 
     @Override
     public Flux<MqttMessage> subscribe(List<String> topics, int qos) {
-        return Flux.create(sink -> {
-            ClientConnection conn = getConnection();
-            if (conn == null || !conn.isAlive()) {
-                sink.error(new IllegalStateException("MQTT client is not connected"));
-                return;
-            }
+        ClientConnection conn = getConnection();
+        if (conn == null || !conn.isAlive()) {
+            return Flux.error(new IllegalStateException("MQTT client is not connected"));
+        }
 
+        Sinks.Many<MqttMessage> sink = Sinks.many().unicast().onBackpressureBuffer();
+
+        MqttQoS mqttQoS = MqttQoS.valueOf(qos);
+        Disposable shareSub;
+        if (!StringUtils.isEmpty(topicPrefix)) {
             List<String> completeTopics = topics.stream()
                                                 .map(this::getCompleteTopic)
                                                 .collect(Collectors.toList());
+            shareSub = connection.subscribe(completeTopics, mqttQoS, ignore -> Mono.empty());
+        } else {
+            shareSub = null;
+        }
 
-            Disposable disposable = conn.subscribe(
-                completeTopics,
-                MqttQoS.valueOf(qos),
-                receivedPublish -> {
-                    try {
-                        MqttMessage mqttMessage = convertToMqttMessage(receivedPublish);
-                        log.debug("handle mqtt message \n{}", mqttMessage);
-                        sink.next(mqttMessage);
-                    } catch (Exception e) {
-                        log.error("handle mqtt message error", e);
+        Disposable disposable = conn.subscribe(
+            topics,
+            mqttQoS,
+            receivedPublish -> {
+                try {
+                    MqttMessage mqttMessage = convertToMqttMessage(receivedPublish);
+                    log.debug("handle mqtt message \n{}", mqttMessage);
+                    Sinks.EmitResult result = sink.tryEmitNext(mqttMessage);
+                    if (result.isFailure()) {
+                        log.warn("emit mqtt message failed: {}", result);
                     }
-                    return Mono.empty();
+                } catch (Exception e) {
+                    log.error("handle mqtt message error", e);
                 }
-            );
+                return Mono.empty();
+            }
+        );
 
-            sink.onDispose(disposable);
-        });
+        return sink.asFlux()
+                   .doFinally(signal-> {
+                       disposable.dispose();
+                       if (shareSub != null) {
+                           shareSub.dispose();
+                       }
+                   });
     }
 
     private MqttMessage convertToMqttMessage(ClientReceivedPublish receivedPublish) {
-        // retain payload，因为 reactor-mqtt 可能会在回调返回后释放原始 ByteBuf
-        // 消费者处理完消息后需要调用 ReferenceCountUtil.release(payload) 释放
         ByteBuf payload = receivedPublish.getPayload();
         if (payload != null) {
             payload.retain();
@@ -169,20 +168,6 @@ public class DefaultJetlinksMqttClient implements JetlinksMqttClient {
 
     @Override
     public Mono<Void> publish(MqttMessage message) {
-        if (isLoading()) {
-            return Mono.create(sink -> {
-                loadSuccessListener.add(() -> {
-                    doPublish(message)
-                        .doOnSuccess(v -> sink.success())
-                        .doOnError(sink::error)
-                        .subscribe();
-                });
-            });
-        }
-        return doPublish(message);
-    }
-
-    private Mono<Void> doPublish(MqttMessage message) {
         ClientConnection conn = getConnection();
         if (conn == null || !conn.isAlive()) {
             return Mono.error(new IllegalStateException("MQTT client is not connected"));
@@ -210,14 +195,25 @@ public class DefaultJetlinksMqttClient implements JetlinksMqttClient {
 
     @Override
     public void shutdown() {
-        LOADING.setVolatile(this, false);
-        ClientConnection conn = (ClientConnection) CONNECTION.getAndSet(this, null);
+        shutdownAsync().subscribe();
+    }
+
+    /**
+     * 异步关闭客户端连接
+     *
+     * @return 完成信号
+     */
+    public Mono<Void> shutdownAsync() {
+        ClientConnection conn = getConnection();
         if (conn != null && conn.isAlive()) {
-            try {
-                conn.disconnect().subscribe();
-            } catch (Exception ignore) {
-            }
+            return conn.disconnect()
+                       .timeout(Duration.ofSeconds(5))
+                       .onErrorResume(e -> {
+                           log.warn("mqtt client [{}] disconnect error", id, e);
+                           return Mono.empty();
+                       });
         }
+        return Mono.empty();
     }
 
     @Override

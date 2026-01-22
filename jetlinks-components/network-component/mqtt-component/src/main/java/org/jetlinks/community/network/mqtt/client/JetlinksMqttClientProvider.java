@@ -49,7 +49,7 @@ import java.time.Duration;
 @Component
 @Slf4j
 @ConfigurationProperties(prefix = "jetlinks.network.mqtt-client")
-public class MqttClientProvider implements NetworkProvider<MqttClientProperties> {
+public class JetlinksMqttClientProvider implements NetworkProvider<MqttClientProperties> {
 
     private final CertificateManager certificateManager;
 
@@ -57,11 +57,7 @@ public class MqttClientProvider implements NetworkProvider<MqttClientProperties>
     @Setter
     private int keepAliveInterval = 180;
 
-    @Getter
-    @Setter
-    private int maxInflightQueue = 65535;
-
-    public MqttClientProvider(CertificateManager certificateManager) {
+    public JetlinksMqttClientProvider(CertificateManager certificateManager) {
         this.certificateManager = certificateManager;
     }
 
@@ -75,32 +71,32 @@ public class MqttClientProvider implements NetworkProvider<MqttClientProperties>
     @Override
     public Mono<Network> createNetwork(@Nonnull MqttClientProperties properties) {
         DefaultJetlinksMqttClient mqttClient = new DefaultJetlinksMqttClient(properties.getId());
-        return initMqttClient(mqttClient, properties);
+        return doStart(mqttClient, properties);
     }
 
     @Override
     public Mono<Network> reload(@Nonnull Network network, @Nonnull MqttClientProperties properties) {
         DefaultJetlinksMqttClient mqttClient = ((DefaultJetlinksMqttClient) network);
-        if (mqttClient.isLoading()) {
-            return Mono.just(mqttClient);
+        if (mqttClient.isSameConfig(properties)) {
+            return Mono.just(network);
         }
-        return initMqttClient(mqttClient, properties);
+        return mqttClient.shutdownAsync()
+                         .then(doStart(mqttClient, properties));
     }
 
-    public Mono<Network> initMqttClient(DefaultJetlinksMqttClient mqttClient, MqttClientProperties properties) {
-        return createReactorMqttClient(properties)
+    public Mono<Network> doStart(DefaultJetlinksMqttClient mqttClient, MqttClientProperties properties) {
+        mqttClient.setMqttClientProperties(properties);
+        return initClient(properties)
             .flatMap(client -> {
                 mqttClient.setTopicPrefix(properties.getTopicPrefix());
-                mqttClient.setLoading(true);
-
                 return client.connect()
+                             .timeout(Duration.ofSeconds(30))
                              .doOnSuccess(connection -> {
                                  mqttClient.setConnection(connection);
-                                 mqttClient.setLoading(false);
                                  log.debug("connect mqtt [{}] success", properties.getId());
                              })
                              .doOnError(err -> {
-                                 mqttClient.setLoading(false);
+                                 mqttClient.setConnection(null);
                                  log.warn("connect mqtt [{}@{}:{}] error",
                                           properties.getClientId(),
                                           properties.getRemoteHost(),
@@ -111,7 +107,7 @@ public class MqttClientProvider implements NetworkProvider<MqttClientProperties>
             });
     }
 
-    private Mono<MqttClient> createReactorMqttClient(MqttClientProperties config) {
+    private Mono<MqttClient> initClient(MqttClientProperties config) {
         MqttClient client = MqttClient.create()
                                       .host(config.getRemoteHost())
                                       .port(config.getRemotePort())
